@@ -4,24 +4,36 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 	"strings"
+	"net/http"
 
 	"github.com/sirupsen/logrus"
+	"github.com/gorilla/mux"
 )
 
 var (
-        sonamesMap sync.Map
+	sonamesMap sync.Map
 )
 
-// Server is our HTTP server implementation.
 type Server struct {
         config *Config
 
         logger logrus.FieldLogger
+
+		sonamesMapMutex sync.RWMutex
+}
+
+type Empty struct {
+}
+
+type Soname struct {
+	Packages []string `json:"packages"`
 }
 
 func NewServer(c *Config) (*Server, error) {
@@ -44,11 +56,40 @@ func (s *Server) Serve(ctx context.Context) error {
 	logger.Infoln("parsing link databases")
 
 	// Parse link Database on startup
+	start := time.Now()
 	s.ParseLinksDatabases("")
+	duration := time.Since(start)
 
-	logger.Infoln("link databases parsed")
+	logger.WithField("duration", duration).Infoln("link databases parsed")
+
+	router := mux.NewRouter().StrictSlash(true)
+    router.HandleFunc("/{soname}", s.handleSonameRequest)
+
+	http.ListenAndServe(":8080", router)
 
 	return err
+}
+
+func (s *Server) handleSonameRequest(w http.ResponseWriter, r *http.Request) {
+	logger := s.logger
+	vars := mux.Vars(r)
+	soname := vars["soname"]
+
+	logger.WithField("soname", soname).Debugln("handle soname request")
+
+	s.sonamesMapMutex.RLock()
+	packages, ok := sonamesMap.Load(soname)
+	s.sonamesMapMutex.RUnlock()
+
+	if ! ok {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(Empty{})
+		return
+	}
+
+	object := Soname{packages.([]string)}
+
+	json.NewEncoder(w).Encode(object)
 }
 
 // /srv/ftp/$repo/os/$arch/$repo.links.tar.gz
