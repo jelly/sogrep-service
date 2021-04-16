@@ -111,9 +111,6 @@ func (s *Server) ParseLinksDatabases(location string) {
 	}
 
 	wg.Wait()
-
-	value, _ := sonamesMap.Load("libavif.so")
-	logger.Infoln(value)
 }
 
 func (s *Server) ParseLinksDatabase(file string, wg *sync.WaitGroup) error {
