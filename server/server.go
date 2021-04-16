@@ -132,8 +132,6 @@ func (s *Server) ParseLinksDatabase(file string, wg *sync.WaitGroup) error {
 
 	archive := tar.NewReader(gzfp)
 
-	//sonamesMap = sync.Map{}
-
 	for {
 		header, err := archive.Next()
 		if err == io.EOF {
