@@ -13,6 +13,7 @@ import (
 	"strings"
 	"net/http"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/sirupsen/logrus"
 	"github.com/gorilla/mux"
 )
@@ -20,6 +21,13 @@ import (
 var (
 	sonamesMap sync.Map
 )
+
+func eraseSyncMap(m *sync.Map) {
+    m.Range(func(key interface{}, value interface{}) bool {
+        m.Delete(key)
+        return true
+    })
+}
 
 type Server struct {
         config *Config
@@ -53,8 +61,13 @@ func (s *Server) Serve(ctx context.Context) error {
 
 	logger := s.logger
 
-	logger.Infoln("parsing link databases")
 
+	go func() {
+		logger.Debugln("setup watchers")
+		s.SetupWatchers("")
+	}()
+
+	logger.Infoln("parsing link databases")
 	// Parse link Database on startup
 	start := time.Now()
 	s.ParseLinksDatabases("")
@@ -92,11 +105,87 @@ func (s *Server) handleSonameRequest(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(object)
 }
 
-// /srv/ftp/$repo/os/$arch/$repo.links.tar.gz
-func (s *Server) ParseLinksDatabases(location string) {
-	var wg sync.WaitGroup
-
+func (s *Server) EventHandler(ch chan string, matches int) {
 	logger := s.logger
+	var events []string
+	timeoutDuration := time.Duration(10)
+
+	timeout := time.After(timeoutDuration * time.Second)
+
+	for {
+		select {
+		case result := <-ch:
+			logger.WithField("channel msg", result).Debugln("received channel message")
+			events = append(events, result);
+		case <- timeout:
+			timeout = time.After(timeoutDuration * time.Second)
+
+			if len(events) == 0 {
+				break
+			}
+
+			logger.WithField("events", events).Debugln("collected events")
+
+			start := time.Now()
+			s.ParseLinksDatabases("")
+			duration := time.Since(start)
+			logger.WithField("duration", duration).Infoln("link databases parsed")
+
+			// reset events
+			events = make([]string, 0)
+		}
+	}
+}
+
+func (s *Server) SetupWatchers(location string) error {
+	logger := s.logger
+	// TODO: use one source of truth?
+	matches := s.GetLinksDatabases(location)
+
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		logger.WithError(err).Errorf("failed to start inotfiy watcher")
+		return err
+	}
+
+	defer watcher.Close()
+
+	for _, match := range matches {
+		watcher.Add(match)
+	}
+
+	// createlinks gives two WRITE's for one database
+	changes := make(chan string)
+	done := make(chan bool)
+
+	go s.EventHandler(changes, len(matches) * 2)
+
+	go func() {
+		for {
+			select {
+			case event, ok := <-watcher.Events:
+				if !ok {
+					return
+				}
+				logger.WithField("event", event).Debugln("received inotify event")
+				if event.Op&fsnotify.Write == fsnotify.Write {
+					changes <- event.Name
+				}
+			case err := <-watcher.Errors:
+				logger.WithError(err).Debugln("received inotify error")
+			}
+		}
+	}()
+
+	<-done
+
+	return nil
+}
+
+
+func (s *Server) GetLinksDatabases(location string) []string {
+	logger := s.logger
+
 	pattern := "./ftp/*/os/*/*.links.tar.gz"
 
 	matches, err := filepath.Glob(pattern)
@@ -104,6 +193,19 @@ func (s *Server) ParseLinksDatabases(location string) {
 		logger.WithError(err).Errorf("Unable to find links databases")
 	}
 
+	return matches
+}
+
+// /srv/ftp/$repo/os/$arch/$repo.links.tar.gz
+func (s *Server) ParseLinksDatabases(location string) {
+	var wg sync.WaitGroup
+
+
+	logger := s.logger
+	matches := s.GetLinksDatabases(location)
+
+	s.sonamesMapMutex.Lock()
+	eraseSyncMap(&sonamesMap)
 	for _, match := range matches {
 		logger.WithField("db", match).Debug("parsing links database")
 		wg.Add(1)
@@ -111,6 +213,7 @@ func (s *Server) ParseLinksDatabases(location string) {
 	}
 
 	wg.Wait()
+	s.sonamesMapMutex.Unlock()
 }
 
 func (s *Server) ParseLinksDatabase(file string, wg *sync.WaitGroup) error {
