@@ -32,5 +32,4 @@ libzstd.so.1
 ## Todo
 
 * json endpoint
-* passing the /srv/ftp location as cli arg
 * unix socket support

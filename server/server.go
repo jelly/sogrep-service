@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -70,7 +71,7 @@ func (s *Server) Serve(ctx context.Context) error {
 	logger.Infoln("parsing link databases")
 	// Parse link Database on startup
 	start := time.Now()
-	s.ParseLinksDatabases("")
+	s.ParseLinksDatabases(s.config.RepositoryDirectory)
 	duration := time.Since(start)
 
 	logger.WithField("duration", duration).Infoln("link databases parsed")
@@ -127,7 +128,7 @@ func (s *Server) EventHandler(ch chan string, matches int) {
 			logger.WithField("events", events).Debugln("collected events")
 
 			start := time.Now()
-			s.ParseLinksDatabases("")
+			s.ParseLinksDatabases(s.config.RepositoryDirectory)
 			duration := time.Since(start)
 			logger.WithField("duration", duration).Infoln("link databases parsed")
 
@@ -186,7 +187,7 @@ func (s *Server) SetupWatchers(location string) error {
 func (s *Server) GetLinksDatabases(location string) []string {
 	logger := s.logger
 
-	pattern := "./ftp/*/os/*/*.links.tar.gz"
+	pattern := fmt.Sprintf("%s/*/os/*/*.links.tar.gz", location);
 
 	matches, err := filepath.Glob(pattern)
 	if err != nil {

@@ -12,6 +12,7 @@ import (
 
 var (
 	listenaddress = "localhost:8080"
+	repositoryDirectory = "/srv/ftp"
 )
 
 
@@ -28,6 +29,7 @@ func commandServe() *cobra.Command {
 	}
 
 	serveCmd.Flags().StringVar(&listenaddress, "listen-address", listenaddress, "Address on which the sogrep API is available.")
+	serveCmd.Flags().StringVar(&repositoryDirectory, "repo-dir", repositoryDirectory, "The directory which contains all the repositories.")
 
 	serveCmd.Flags().Bool("log-timestamp", true, "Prefix each log line with timestamp")
 	serveCmd.Flags().String("log-level", "info", "Log level (one of panic, fatal, error, warn, info or debug)")
@@ -46,10 +48,16 @@ func serve(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to create logger: %w", err)
 	}
 
+	_, err = os.Stat(repositoryDirectory)
+	if os.IsNotExist(err) {
+		return fmt.Errorf("provided repo-dir is not a valid directory: %w", err)
+	}
+
 	logger.Debugln("starting sogrep web service")
 
 	cfg := &server.Config{
 		ListenAddress: listenaddress,
+		RepositoryDirectory: repositoryDirectory,
 
 		Logger: logger,
 	}
