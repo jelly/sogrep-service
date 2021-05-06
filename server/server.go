@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -62,16 +63,26 @@ func (s *Server) Serve(ctx context.Context) error {
 
 	logger := s.logger
 
+	// Obtain links databases
+	matches, err := s.GetLinksDatabases(s.config.RepositoryDirectory)
+	if err != nil {
+		logger.WithError(err).Errorf("Unable to find links databases")
+		return err
+	}
+
+	if matches == nil {
+		return errors.New("server: no links databases found")
+	}
 
 	go func() {
 		logger.Debugln("setup watchers")
-		s.SetupWatchers("")
+		s.SetupWatchers(matches)
 	}()
 
 	logger.Infoln("parsing link databases")
 	// Parse link Database on startup
 	start := time.Now()
-	s.ParseLinksDatabases(s.config.RepositoryDirectory)
+	s.ParseLinksDatabases(matches)
 	duration := time.Since(start)
 
 	logger.WithField("duration", duration).Infoln("link databases parsed")
@@ -106,7 +117,7 @@ func (s *Server) handleSonameRequest(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(object)
 }
 
-func (s *Server) EventHandler(ch chan string, matches int) {
+func (s *Server) EventHandler(ch chan string, matches []string) {
 	logger := s.logger
 	var events []string
 	timeoutDuration := time.Duration(10)
@@ -128,7 +139,7 @@ func (s *Server) EventHandler(ch chan string, matches int) {
 			logger.WithField("events", events).Debugln("collected events")
 
 			start := time.Now()
-			s.ParseLinksDatabases(s.config.RepositoryDirectory)
+			s.ParseLinksDatabases(matches)
 			duration := time.Since(start)
 			logger.WithField("duration", duration).Infoln("link databases parsed")
 
@@ -138,10 +149,8 @@ func (s *Server) EventHandler(ch chan string, matches int) {
 	}
 }
 
-func (s *Server) SetupWatchers(location string) error {
+func (s *Server) SetupWatchers(matches []string) error {
 	logger := s.logger
-	// TODO: use one source of truth?
-	matches := s.GetLinksDatabases(location)
 
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
@@ -155,11 +164,10 @@ func (s *Server) SetupWatchers(location string) error {
 		watcher.Add(match)
 	}
 
-	// createlinks gives two WRITE's for one database
 	changes := make(chan string)
 	done := make(chan bool)
 
-	go s.EventHandler(changes, len(matches) * 2)
+	go s.EventHandler(changes, matches)
 
 	go func() {
 		for {
@@ -184,26 +192,22 @@ func (s *Server) SetupWatchers(location string) error {
 }
 
 
-func (s *Server) GetLinksDatabases(location string) []string {
-	logger := s.logger
-
+func (s *Server) GetLinksDatabases(location string) ([]string, error) {
 	pattern := fmt.Sprintf("%s/*/os/*/*.links.tar.gz", location);
 
 	matches, err := filepath.Glob(pattern)
 	if err != nil {
-		logger.WithError(err).Errorf("Unable to find links databases")
+		return matches, err
 	}
 
-	return matches
+	return matches, nil
 }
 
 // /srv/ftp/$repo/os/$arch/$repo.links.tar.gz
-func (s *Server) ParseLinksDatabases(location string) {
+func (s *Server) ParseLinksDatabases(matches []string) {
 	var wg sync.WaitGroup
 
-
 	logger := s.logger
-	matches := s.GetLinksDatabases(location)
 
 	s.sonamesMapMutex.Lock()
 	eraseSyncMap(&sonamesMap)
