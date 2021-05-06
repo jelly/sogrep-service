@@ -33,5 +33,4 @@ libzstd.so.1
 
 * json endpoint
 * passing the /srv/ftp location as cli arg
-* reloading changed links dbs with inotify
 * unix socket support
