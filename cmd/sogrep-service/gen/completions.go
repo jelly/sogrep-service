@@ -1,4 +1,4 @@
-package cmd
+package gen
 
 import (
 	"os"
@@ -6,11 +6,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// completionsCmd represents the completions command
-var completionsCmd = &cobra.Command{
-	Use:   "completion [bash|zsh|fish]",
-	Short: "Generate completion script",
-	Long: `To load completions:
+func CommandAutoComplete() *cobra.Command {
+	completionCmd := &cobra.Command{
+		Use:   "completion [bash|zsh|fish]",
+		Short: "Generate completion script",
+		Long: `To load completions:
 
 Bash:
 
@@ -41,21 +41,20 @@ fish:
   # To load completions for each session, execute once:
   $ sogrep-service completion fish > ~/.config/fish/completions/sogrep-service.fish
 `,
-	DisableFlagsInUseLine: true,
-	ValidArgs:             []string{"bash", "zsh", "fish", "powershell"},
-	Args:                  cobra.ExactValidArgs(1),
-	Run: func(cmd *cobra.Command, args []string) {
-		switch args[0] {
-		case "bash":
-			cmd.Root().GenBashCompletion(os.Stdout)
-		case "zsh":
-			cmd.Root().GenZshCompletion(os.Stdout)
-		case "fish":
-			cmd.Root().GenFishCompletion(os.Stdout, true)
-		}
-	},
-}
+		DisableFlagsInUseLine: true,
+		ValidArgs:             []string{"bash", "zsh", "fish", "powershell"},
+		Args:                  cobra.ExactValidArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			switch args[0] {
+			case "bash":
+				cmd.Root().GenBashCompletion(os.Stdout)
+			case "zsh":
+				cmd.Root().GenZshCompletion(os.Stdout)
+			case "fish":
+				cmd.Root().GenFishCompletion(os.Stdout, true)
+			}
+		},
+	}
 
-func init() {
-	RootCmd.AddCommand(completionsCmd)
+	return completionCmd
 }
