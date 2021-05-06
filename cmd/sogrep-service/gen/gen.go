@@ -13,7 +13,7 @@ func CommandGen() *cobra.Command {
 		Short: "A collection of useful generators",
 	}
 
-	//genCmd.AddCommand(CommandMan())
+	genCmd.AddCommand(CommandMan())
 	genCmd.AddCommand(CommandAutoComplete())
 
 	return genCmd
