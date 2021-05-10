@@ -9,10 +9,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"sync"
 	"time"
 	"strings"
+	"syscall"
+	"net"
 	"net/http"
 
 	"github.com/fsnotify/fsnotify"
@@ -57,6 +60,7 @@ func NewServer(c *Config) (*Server, error) {
 
 func (s *Server) Serve(ctx context.Context) error {
 	var err error
+	var wg sync.WaitGroup
 
 	_, serveCtxCancel := context.WithCancel(ctx)
 	defer serveCtxCancel()
@@ -74,11 +78,6 @@ func (s *Server) Serve(ctx context.Context) error {
 		return errors.New("server: no links databases found")
 	}
 
-	go func() {
-		logger.Debugln("setup watchers")
-		s.SetupWatchers(matches)
-	}()
-
 	logger.Infoln("parsing link databases")
 	// Parse link Database on startup
 	start := time.Now()
@@ -87,10 +86,116 @@ func (s *Server) Serve(ctx context.Context) error {
 
 	logger.WithField("duration", duration).Infoln("link databases parsed")
 
+	errCh := make(chan error, 2)
+	exitCh := make(chan bool, 1)
+	signalCh := make(chan os.Signal, 1)
+	inotifyDone := make(chan bool)
+
+	listener, err := net.Listen("tcp", s.config.ListenAddress)
+	if err != nil {
+		logger.WithError(err).Errorf("failed to create http socket")
+		return err
+	}
+	defer listener.Close()
+
 	router := mux.NewRouter().StrictSlash(true)
     router.HandleFunc("/{soname}", s.handleSonameRequest)
 
-	http.ListenAndServe(":8080", router)
+	sogrepServer := http.Server{
+		Handler: router,
+	}
+
+	wg.Add(1)
+
+	go func() {
+		defer wg.Done()
+
+		err := sogrepServer.Serve(listener)
+		if err != nil {
+			errCh <- err
+		}
+
+		logger.Debugln("http listener stopped")
+	}()
+
+	wg.Add(1)
+
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		logger.WithError(err).Errorf("failed to start inotfiy watcher")
+		return err
+	}
+
+	go func() {
+		defer wg.Done()
+
+		logger.Debugln("setup watchers")
+		err = s.SetupWatchers(watcher, matches, inotifyDone)
+		if err != nil {
+			errCh <- err
+		}
+
+		logger.Debugln("inotify listener stopped")
+	}()
+
+	// Wait for exit or error.
+	signal.Notify(signalCh, syscall.SIGINT, syscall.SIGTERM)
+	select {
+	case err = <-errCh:
+		// breaks
+	case reason := <-signalCh:
+		logger.WithField("signal", reason).Warnln("received signal")
+		// breaks
+	}
+
+	logger.Infoln("clean server shutdown start")
+
+	shutDownCtx, shutDownCtxCancel := context.WithTimeout(ctx, 10*time.Second)
+	go func() {
+		if shutdownErr := sogrepServer.Shutdown(shutDownCtx); shutdownErr != nil {
+			logger.WithError(shutdownErr).Warn("clean http server shutdown failed")
+		}
+	}()
+
+	_, shutDownCtxCancel2 := context.WithTimeout(ctx, 10*time.Second)
+	go func() {
+		inotifyDone <- true
+		if shutdownErr := watcher.Close(); shutdownErr != nil {
+			logger.WithError(shutdownErr).Warn("clean http server shutdown failed")
+		}
+	}()
+
+	go func() {
+		wg.Wait()
+		close(exitCh)
+	}()
+
+	// Cancel our own context,
+	serveCtxCancel()
+	func() {
+		for {
+			select {
+			case <-exitCh:
+				return
+			default:
+				// HTTP listener has not quit yet.
+				logger.Info("waiting for listeners to exit")
+			}
+			select {
+			case reason := <-signalCh:
+				logger.WithField("signal", reason).Warn("received signal")
+				return
+			case <-time.After(100 * time.Millisecond):
+			}
+		}
+	}()
+
+	shutDownCtxCancel()  // prevent leak.
+	shutDownCtxCancel2() // prevent leak.
+
+	if errors.Is(err, http.ErrServerClosed) {
+		err = nil
+	}
 
 	return err
 }
@@ -149,23 +254,14 @@ func (s *Server) EventHandler(ch chan string, matches []string) {
 	}
 }
 
-func (s *Server) SetupWatchers(matches []string) error {
+func (s *Server) SetupWatchers(watcher *fsnotify.Watcher, matches []string, done chan bool) error {
 	logger := s.logger
-
-	watcher, err := fsnotify.NewWatcher()
-	if err != nil {
-		logger.WithError(err).Errorf("failed to start inotfiy watcher")
-		return err
-	}
-
-	defer watcher.Close()
 
 	for _, match := range matches {
 		watcher.Add(match)
 	}
 
 	changes := make(chan string)
-	done := make(chan bool)
 
 	go s.EventHandler(changes, matches)
 
