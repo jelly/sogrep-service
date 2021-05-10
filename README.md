@@ -6,7 +6,15 @@ On startup the program parses the links database into a hashmap of:
 
 soname => [packages]
 
-This allows someone to search for $sogrep and get the resulting packages
+This allows someone to search for $sogrep and get the resulting packages. In
+the background inotify monitors for links database updates and updates the in
+memory mapping automatically.
+
+```
+curl "http://localhost:8080/libpcap.so"
+
+{"packages":["ldns","iptables","iptables-nft","ppp"]}
+```
 
 ## links database
 
