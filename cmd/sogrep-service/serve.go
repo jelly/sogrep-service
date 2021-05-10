@@ -28,7 +28,7 @@ func commandServe() *cobra.Command {
 		},
 	}
 
-	serveCmd.Flags().StringVar(&listenaddress, "listen-address", listenaddress, "Address on which the sogrep API is available.")
+	serveCmd.Flags().StringVar(&listenaddress, "listen-address", listenaddress, "Address on which the sogrep API is available. unix:/run/sogrep-service/server.sock for unix socket.")
 	serveCmd.Flags().StringVar(&repositoryDirectory, "repo-dir", repositoryDirectory, "The directory which contains all the repositories.")
 
 	serveCmd.Flags().Bool("log-timestamp", true, "Prefix each log line with timestamp")

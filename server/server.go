@@ -90,8 +90,22 @@ func (s *Server) Serve(ctx context.Context) error {
 	exitCh := make(chan bool, 1)
 	signalCh := make(chan os.Signal, 1)
 	inotifyDone := make(chan bool)
+	listenType := "tcp"
+	listenAddress := s.config.ListenAddress
 
-	listener, err := net.Listen("tcp", s.config.ListenAddress)
+	// Use a unix socket if unix:/tmp/server.sock addresses are provided
+	if strings.HasPrefix(listenAddress, "unix:") {
+		listenType = "unix"
+		listenAddress = strings.Replace(listenAddress, "unix:", "", 1)
+		logger.WithField("unix socket", listenAddress).Debugln("parsed socket location")
+		if err := os.RemoveAll(listenAddress); err != nil {
+			logger.WithError(err).Errorf("failed to remove socket location")
+			return err
+		}
+	}
+
+	listener, err := net.Listen(listenType, listenAddress)
+
 	if err != nil {
 		logger.WithError(err).Errorf("failed to create http socket")
 		return err
